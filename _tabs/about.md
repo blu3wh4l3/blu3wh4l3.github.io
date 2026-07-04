@@ -4,7 +4,7 @@ icon: fas fa-info-circle
 order: 4
 ---
 
-![Hero image](/assets/headers/about-banner.webp)
+![Hero image](/assets/img/favicons/about.png)
 
 ## Hey there, I'm N V Anu(aka blu3wh4l3) 👋
 
