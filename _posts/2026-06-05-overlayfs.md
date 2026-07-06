@@ -42,7 +42,23 @@ Now the important thing that comes is the copy-up operation in overlayFS. Like I
 - Meaning, whichever file user tries to edit, kernel makes a copy of that file and stores in the upper layer.
 - User works on the copy of the file rather than the original one in the lower layer.
 - Copy-up is only triggered when user tries to modify an existing file, no copy-up is triggered for read operation or a new file creation.
+- Any attempt to change or edit a file in the lower layer will trigger a copy-up.
+- Copy-up also copies the file attributes like permission from lower layer to upper layer and how kernel handles this permission mapping from lower to upper layer is where the vulnerability lies.
 
 This is what a copy-up operation looks like.
 
-### Metadata and Permission Copy-up
+## What's SUID bit?
+Now another thing to understand is SUID bit most of you might already know this(you can skip to the namespace section) but for the sake of this blog I'll explain it. SUID bit is a special permission bit that can be used to execute a file/binary with the owner's permission.
+
+Lets say a binary called test is owned by root and the SUID bit for this file than a normal user can execute this file with root permission.
+
+![suid_bit](/assets/img/SUID.jpg)
+
+## The User Namespace
+A user namespace is a linux security feature that lets a process to have an isolated environment which gives the process the illusion that it has full access to the entire system(within the isolated environment) But in reality it just have a normal user permission within the host system allocated by the kernel.
+
+### Permission mapping between host and user namespace
+- The host system maintains a mapping that translates the user and group IDs (UIDs/GIDs) used inside a namespace to distinct, unprivileged IDs on the host system.
+- If a process is running as root(uid=0,gid-0) in the namespace, then the same process will be mapped to a low privileged user in the host(uid=1000,gid=1000).
+
+## CVE-2023-0386 - Privilege Escalation using OverlayFS subsytem flaw
