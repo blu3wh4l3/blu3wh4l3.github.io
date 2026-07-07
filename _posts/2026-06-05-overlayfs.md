@@ -62,3 +62,20 @@ A user namespace is a linux security feature that lets a process to have an isol
 - If a process is running as root(uid=0,gid-0) in the namespace, then the same process will be mapped to a low privileged user in the host(uid=1000,gid=1000).
 
 ## CVE-2023-0386 - Privilege Escalation using OverlayFS subsytem flaw
+Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnerability that allows a low privileged local linux user to gain root access using a flaw in the ovrelayFS subsystem.
+- CVE-2023-0386 occurs because the Linux kernel did not properly validate the UID/GID mapping of a file's owner during an OverlayFS copy-up operation. An attacker can create a file inside an unprivileged user namespace where they appear to be as a root user(UID=0.GID=0) within that namespace and set the SUID bit on the file. When OverlayFS(the overlayFS driver which is part of the kernel) performs a copy-up, the kernel blindly trusts the file's ownership information from the namespace without verifying that the file owner's UID/GID has a valid mapping to the host user namespace. As a result, the kernel copies the file into the upper layer while preserving its privileged metadata(In this case the root ownership and the set SUID bit).
+
+- After the copy-up is completed, the attacker exits the user namespace and executes the copied file from the upper layer. Because the file now exists on the host filesystem as a root-owned SUID executable, executing it causes the program to run with host root privileges, resulting in a local privilege escalation.
+
+### How the exploit works?
+- For the exploit to work, first we need to SUID binary in the lower layer.
+- Normally a low privileged user cannot create file which is owned by root or even set SUID bit of file owned by root in the host system. But you probably might be thinking we can use the user namespace for this right? Like I previously explained anyone inside user namespace could be root right?
+- Well here's where things get a little tricky. Kernel does allows any file within the namespace to be owned by root or even SUID but can be set, because user within namespace has the CAP_FOWNER capabilities but within the host system, the same file cannot have host root ownership.
+- The reason for that is a normal user namespace uses the host machine's filesystem like ext4, which doesn't let unprivileged user create a file that appears to be owned by the host root.
+- To bypass that, we'll be using something like FUSE(Filesystem in Userspace)
+
+### Exploiting CVE-2023-0386
+> Spoiler Alert!!. I'll be using the HTB machine called twomillion to demonstrate this vulnerability.
+{: .prompt-info }
+
+- To exploit this we first need to cre
