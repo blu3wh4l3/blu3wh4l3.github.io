@@ -1,14 +1,13 @@
 ---
 title: OverlayFS - Copy-up to Privilege Escalation(CVE-2023-0386)
 date: 2026-06-05 13:57:00 +/-TTTT
-categories: [CVE, PRIVILEGE ESCALATION, VULNERABILITY]
+categories: [cve, overlayfs]
 tags: [linux, priv_esc, cve]     # TAG names should always be lowercase
 ---
 
-Hey everyone, welcome to **Bluewh4l3 Byt3s!** Technically, this is my second blog post—my very first was a TryHackMe writeup over on Medium a long time ago—but this marks the official launch of this site. Today, we’re diving deep into OverlayFS and a critical CVE tied to it. We will be breaking down how it works under the hood and how it can be exploited, so I hope you find it valuable. Let’s jump right in!
+Hey everyone, welcome to **Bluewh4l3 Byt3s!** This is going to be my first blog and in this blog I'll be sharing cybersecurity related contents that I learned and I hope it'll be valuable for the commuunity as well. Today, we’re diving deep into OverlayFS and a critical CVE tied to it. We will be breaking down how it works under the hood and how it can be exploited, so I hope you find it valuable. Let’s jump right in!
 
 > Before jumping into the CVE, we first need to understand whats overlayFS and how does it work and what makes it vulnerable. so bear with me for sometime. I'll give you a clear background information on overlayFS, so you'll understand the CVE much clearly.
-PS: It's gonna be a bit long.
 {: .prompt-info }
 
 ## What's OverlayFS?
@@ -29,9 +28,9 @@ merged view(overlayFS) - The combined view when someone looks through both the l
 
 ## OverlayFS in action - How Docker uses it
 The best example of an overlayFS are docker containers. Lets look at how docker containers work
-- Lets say we wanna pull an ubuntu image from docker, when we run docker pull command it'll first check if the image is available locally if not it'll pull an image from the docker hub.
+- Lets say we wanna spawn up an ubuntu container using docker and we run ```docker run ubuntu``` command, it'll first check if the image is available locally if not it'll pull an image from the docker hub.
 - Now this docker image is the lower layer. With this image we can create multiple containers. This is where overlayFS comes into play.
-- When multiple containers are created and user views each containers, they'll be viewing a single base image of ubuntu which is mostly stored locally at ```/var/lib/docker/``` in linux
+- When multiple containers are created and user views each containers, they'll be viewing a single base image of ubuntu which is mostly stored locally at ```/var/lib/docker/overlay2/``` in linux
 - It gives an illusion that user is viewing an entire ubuntu filesystem of its own.
 - When user wants to make any changes in the container(merged view), then that change is recorded in a separate directory: ```/var/lib/docker/overlay2/container-cache-id/diff/``` but the base image of ubuntu never changes. It remains same across all the containers.
 
@@ -44,8 +43,6 @@ Now the important thing that comes is the copy-up operation in overlayFS. Like I
 - Copy-up is only triggered when user tries to modify an existing file, no copy-up is triggered for read operation or a new file creation.
 - Any attempt to change or edit a file in the lower layer will trigger a copy-up.
 - Copy-up also copies the file attributes like permission from lower layer to upper layer and how kernel handles this permission mapping from lower to upper layer is where the vulnerability lies.
-
-This is what a copy-up operation looks like.
 
 ## What's SUID bit?
 Now another thing to understand is SUID bit most of you might already know this(you can skip to the namespace section) but for the sake of this blog I'll explain it. SUID bit is a special permission bit that can be used to execute a file/binary with the owner's permission.
@@ -75,7 +72,7 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - FUSE is a software interface for unix-like operating systems that allows unprivileged users to create/mount custom filesystems without making any edits to the kernel.
 - This is achieved by running the custom filesystem code in userspace instead of kernel.
 - Now coming to how FUSE actually helps with this vulnerability, Any file created inside a FUSE filesystem inherits whatever permissions the user-space handler gives it. Since the kernel isn't running the underlying filesystem code, it blindly trusts what the FUSE daemon reports—which is exactly how this boundary gets exploited.
-- Now, if we create a root owned binary with SUID bit set and tell the kernel that this binary is host root owned with SUID bit set, then kernel will simply believe it and when user triggers the copy-up of this binary, kernel will directly copy this file to the upper directory of which we have configured foe overlayFS whbich is in the host system.
+- Now, if we create a root owned binary with SUID bit set and tell the kernel that this binary is host root owned with SUID bit set, then kernel will simply believe it and when user triggers the copy-up of this binary, kernel will directly copy this file to the upper directory which we have configured for overlayFS which is in the host system.
 
 <!-- ### How the exploit works? - REMOVE
 - For the exploit to work, first we need to SUID binary in the lower layer.
@@ -84,13 +81,16 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - The reason for that is a normal user namespace uses the host machine's filesystem like ext4, which doesn't let unprivileged user create a file that appears to be owned by the host root.
 - To bypass that, we'll be using something like FUSE(Filesystem in Userspace) -->
 
-### How the exploit works? - NEW
+### How the exploit works?
 - First we need to be able to create a root owned file and change the file's SUID bit, for that we'll need to create a user namespace.
-- Now we need a custom filesystem that'll tell the kernel that the file is actually owned by root. For this we'll be using a FUSE program(written in C code)amd we'll provide a target directrory(within the user namespace) as an argument to the program.
-- FUSE program will interact with kernel and mount this directory
+- Now, you probably might be thinking we can use the user namespace for this right? Like I previously explained anyone inside user namespace could be root right?
+- Well here's where things get a little tricky, kernel does allows any file within the namespace to be owned by root or even SUID but can be set, because user within namespace has the CAP_FOWNER capabilities but we cannot make the host kernel think that this file is actually owned by host root.
+- Now we need a custom filesystem within the user namespace that'll tell the  host kernel that the file is actually owned by root(which is required for this vulnerability to work). For this we'll be using FUSE program and pass it a directory as an argument.
+- FUSE program will interact with the kernel and mount this directory(within the user namespace?)
 - Now we'll be creating an overlayFS with lower layer as the FUSE mount and upper directory as a world writable host directory(something like /tmp).
 - Now we'll create a binary(mostly a bash shell) and trigger a copy-up operation by simply using the touch command on the binary.
 - Due to the underlying flaw in the overlayFS subsystem, it'll copy the binary to the /tmp directory while keeping the UID=0 and SUID bit.
+- Attacker can simply exit the namespace and execute the binary under /tmp and will be elevated to a root user.
 
 
 
@@ -107,7 +107,18 @@ $ uname -r
     ![kernel_version](/assets/img/kernel_version.png)
 - So the specific kernel version 5.15 is indeed a vulnerable version.
 - Now to exploit this we'll be using the public exploit [CVE-2023-0386](https://github.com/DataDog/security-labs-pocs/blob/main/proof-of-concept-exploits/overlayfs-cve-2023-0386/poc.c)
-- I'll just explain what this exploit does in short, it first creates a FUSE filesystem using libfuse and  ```FILL THIS LATER ON```
+- I'll just explain what this exploit does in short. The core logic of the exploit lies in the below line of code. This line of code does exactly what I explained earlier.
+    ```c
+$  sprintf(buf, "unshare -r -m sh -c 'mount -t overlay overlay -o lowerdir=%s,upperdir=%s,workdir=%s %s && ls -la %s && touch %s/file'", DIR_LOWER, DIR_UPPER, DIR_WORK, DIR_MERGE, DIR_MERGE, DIR_MERGE);
+```
+![exploit_code](/assets//img/exploit_code.png)
+
+- Lets break this code down, ```unshare -r``` creates a user namespace first and the ```r``` option instantly gives virtual root capabilities inside your private namespace.
+- We are now technically "root" inside the user namespace, the kernel grants us the administrative right to execute the ```m``` flag and create our own private mount space.
+- Now ```overlay overlay -o lowerdir=%s,upperdir=%s,workdir=%s``` will mount an overlayfs on the previously created mount space and provide the lower and upper directory along with a work directory which is used by kernel to store temporary files during copy-up
+- The ```touch %s/file``` command touches the SUID binary(in this case a bash executable binary), which triggers the copy-up.
+- And now we have an SUID binary in the upper host directory.
+
 - Now install libfuse library in the attacking machine if you don't have it already. If you are using kali linux, then you install it using the below command
     ```bash
     sudo apt install fuse
@@ -144,7 +155,14 @@ $ uname -r
 
 ## Mitigating CVE-2023-0386
 - Immediate mitigation step would be to apply vendor specific kernel updates. You can refer the debian's security patch tracker: [Debian security path tracker](https://security-tracker.debian.org/tracker/CVE-2023-0386)
-- 
+- A workaround for this would be to disable overlayFS but that would break functionalities that rely on overlayFS like docker.
+
+## Conclusion
+While overlayFS provides an incredible speed and storage efficiency in maintaining docker containers but the design itself introduces some security flaw which if left unpatched can allow a low privileged user to be escalated to root. The exploitation method is also trivial so it'll be easier for the attackers to takeover the system. Ensure your kernel is up-to-date with the latest patch.
+
+
+Thank you for sticking with me till the end. I hope you got some valuable insights from this. And I'll see you on the next one. Until then ```BREAK. LEARN. REPEAT.```
+
 
 
     
