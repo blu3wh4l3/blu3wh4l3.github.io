@@ -1,6 +1,6 @@
 ---
 title: OverlayFS - Copy-up to Privilege Escalation(CVE-2023-0386)
-date: 2026-06-05 13:57:00 +/-TTTT
+date: 2026-07-10 13:57:00 +/-TTTT
 categories: [cve, overlayfs]
 tags: [linux, priv_esc, cve]     # TAG names should always be lowercase
 ---
@@ -74,12 +74,6 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 - Now coming to how FUSE actually helps with this vulnerability, Any file created inside a FUSE filesystem inherits whatever permissions the user-space handler gives it. Since the kernel isn't running the underlying filesystem code, it blindly trusts what the FUSE daemon reports—which is exactly how this boundary gets exploited.
 - Now, if we create a root owned binary with SUID bit set and tell the kernel that this binary is host root owned with SUID bit set, then kernel will simply believe it and when user triggers the copy-up of this binary, kernel will directly copy this file to the upper directory which we have configured for overlayFS which is in the host system.
 
-<!-- ### How the exploit works? - REMOVE
-- For the exploit to work, first we need to SUID binary in the lower layer.
-- Normally a low privileged user cannot create file which is owned by root or even set SUID bit of file owned by root in the host system. But you probably might be thinking we can use the user namespace for this right? Like I previously explained anyone inside user namespace could be root right?
-- Well here's where things get a little tricky. Kernel does allows any file within the namespace to be owned by root or even SUID but can be set, because user within namespace has the CAP_FOWNER capabilities but within the host system, the same file cannot have host root ownership.
-- The reason for that is a normal user namespace uses the host machine's filesystem like ext4, which doesn't let unprivileged user create a file that appears to be owned by the host root.
-- To bypass that, we'll be using something like FUSE(Filesystem in Userspace) -->
 
 ### How the exploit works?
 - First we need to be able to create a root owned file and change the file's SUID bit, for that we'll need to create a user namespace.
@@ -95,7 +89,8 @@ Now lets look at the CVE itself. CVE-2023-0386 is a privilege escalation vulnera
 
 
 ### Exploitation in Action
-> Spoiler Alert!!. I'll be using the HTB machine called twomillion to demonstrate this vulnerability. Assume that we have initial access to the target machine(I'm skipping the initial access part for the sake of this blog)
+> Spoiler Alert!!. 
+I'll be using the HTB machine called twomillion to demonstrate this vulnerability. Assume that we have initial access to the target machine(I'm skipping the initial access part for the sake of this blog)
 {: .prompt-info }
 
 - Let's look at the kernel version and see if its vulnerable.
